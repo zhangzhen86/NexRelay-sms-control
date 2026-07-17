@@ -32,6 +32,7 @@ class SmsControlTests(unittest.TestCase):
         self.assertEqual(server.OUTBOUND_SMS_COOLDOWN, 5)
         self.assertIn("两次发送至少间隔 5 秒", server.HTML)
         self.assertNotIn("30 秒冷却", server.HTML)
+        self.assertIn('class="compose-meta"><span class="compose-hint">', server.HTML)
 
     def test_filter_rules(self):
         cfg = dict(server.DEFAULTS, sender_allow="10086,+138", sender_block="spam", keyword_include="验证码,code", keyword_exclude="广告")
