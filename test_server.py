@@ -33,6 +33,9 @@ class SmsControlTests(unittest.TestCase):
         self.assertIn("两次发送至少间隔 5 秒", server.HTML)
         self.assertNotIn("30 秒冷却", server.HTML)
         self.assertIn('class="compose-meta"><span class="compose-hint">', server.HTML)
+        self.assertIn("deleteSelectedLogs()", server.HTML)
+        self.assertIn("deleteLogRange()", server.HTML)
+        self.assertIn("deleteAllLogs()", server.HTML)
 
     def test_filter_rules(self):
         cfg = dict(server.DEFAULTS, sender_allow="10086,+138", sender_block="spam", keyword_include="验证码,code", keyword_exclude="广告")
@@ -284,6 +287,28 @@ class SmsControlTests(unittest.TestCase):
                 self.assertIn("[event] event-44", exported)
             finally:
                 server.LOG_FILE = original
+
+    def test_deletes_selected_range_and_all_logs(self):
+        original = server.LOG_FILE
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                server.LOG_FILE = Path(directory) / "events.log"
+                rows = [
+                    {"time": "2026-07-18T00:00:00+00:00", "kind": "event", "message": "first"},
+                    {"time": "2026-07-18T01:00:00+00:00", "kind": "event", "message": "second"},
+                    {"time": "2026-07-18T02:00:00+00:00", "kind": "event", "message": "third"},
+                    {"time": "2026-07-18T03:00:00+00:00", "kind": "event", "message": "fourth"},
+                ]
+                server.LOG_FILE.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+                self.assertEqual([item["_id"] for item in server.paged_logs()["items"]], [3, 2, 1, 0])
+                self.assertEqual(server.delete_logs("selected", [1, 3]), 2)
+                self.assertEqual([row["message"] for row in server.all_logs()], ["first", "third"])
+                self.assertEqual(server.delete_logs("range", start="2026-07-18T01:30:00Z", end="2026-07-18T02:30:00Z"), 1)
+                self.assertEqual([row["message"] for row in server.all_logs()], ["first"])
+                self.assertEqual(server.delete_logs("all"), 1)
+                self.assertEqual(server.all_logs(), [])
+        finally:
+            server.LOG_FILE = original
 
     def test_detects_factory_and_compatible_usb_ids(self):
         with tempfile.TemporaryDirectory() as directory:

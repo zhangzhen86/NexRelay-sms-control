@@ -254,14 +254,72 @@ def all_logs():
     return out
 
 
+def indexed_logs():
+    if not LOG_FILE.exists():
+        return []
+    out = []
+    for line_number, line in enumerate(LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()):
+        try:
+            item = json.loads(line)
+            item["_id"] = line_number
+            out.append(item)
+        except json.JSONDecodeError:
+            pass
+    return out
+
+
 def paged_logs(page=1, page_size=20):
-    items = list(reversed(all_logs()))
+    items = list(reversed(indexed_logs()))
     page_size = bounded_int(page_size, 20, 10, 100)
     total = len(items)
     pages = max(1, (total + page_size - 1) // page_size)
     page = min(bounded_int(page, 1, 1, 1_000_000), pages)
     start = (page - 1) * page_size
     return {"items": items[start:start + page_size], "total": total, "page": page, "page_size": page_size, "pages": pages}
+
+
+def delete_logs(mode, ids=None, start="", end=""):
+    if mode not in {"all", "selected", "range"}:
+        raise ValueError("未知的日志删除方式")
+    selected = set()
+    if mode == "selected":
+        if not isinstance(ids, list) or not ids:
+            raise ValueError("请至少选择一条日志")
+        selected = {bounded_int(value, -1, 0, 100_000_000) for value in ids}
+    start_time = end_time = None
+    if mode == "range":
+        try:
+            start_time = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+            end_time = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=timezone.utc)
+        except ValueError as error:
+            raise ValueError("请选择有效的开始和结束时间") from error
+        if start_time > end_time:
+            raise ValueError("开始时间不能晚于结束时间")
+    with LOCK:
+        lines = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines() if LOG_FILE.exists() else []
+        kept, deleted = [], 0
+        for line_number, line in enumerate(lines):
+            remove = mode == "all" or (mode == "selected" and line_number in selected)
+            if mode == "range":
+                try:
+                    item_time = datetime.fromisoformat(str(json.loads(line).get("time", "")).replace("Z", "+00:00"))
+                    if item_time.tzinfo is None:
+                        item_time = item_time.replace(tzinfo=timezone.utc)
+                    remove = start_time <= item_time <= end_time
+                except (ValueError, json.JSONDecodeError):
+                    remove = False
+            if remove:
+                deleted += 1
+            else:
+                kept.append(line)
+        temporary = LOG_FILE.with_suffix(LOG_FILE.suffix + ".tmp")
+        temporary.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8")
+        os.replace(temporary, LOG_FILE)
+    return deleted
 
 
 def recent_logs(limit=100):
@@ -1369,6 +1427,7 @@ html[data-theme="light"] .nav button{background:transparent;color:#1d1d1f}html[d
 @media(max-width:800px){body.sidebar-open{overflow:hidden}.sidebar{position:fixed;display:flex!important;width:min(86vw,320px);transform:translateX(-105%);transition:transform .22s ease;box-shadow:20px 0 60px #0005}.sidebar.open{transform:translateX(0)}.sidebar-head{display:flex;align-items:flex-start;justify-content:space-between}.sidebar-close{display:grid;place-items:center;width:38px;height:38px;min-height:38px;padding:0;background:transparent!important;color:var(--text)!important;border:1px solid var(--line)!important;font-size:1.3rem}.mobile-backdrop{position:fixed;display:block;inset:0;z-index:19;background:#0007}.mobile-bar{display:flex;position:sticky;top:0;z-index:15;align-items:center;gap:12px;margin:-18px -18px 18px;padding:10px 18px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(18px)}.mobile-bar button{width:40px;height:40px;min-height:40px;padding:0;background:transparent!important;color:var(--text)!important;border:1px solid var(--line)!important}.nav{grid-template-columns:1fr}.wrap{padding-top:18px}.message-tools input{max-width:none;flex:1 1 100%}.message-table-wrap{margin:0 -8px}.modal{padding:12px}.modal-card{padding:19px}.forward-row{display:flex;overflow-x:auto}.forward-row .metric{min-width:165px}}
 .column-sort{display:inline-flex;align-items:center;gap:4px;min-height:0!important;padding:0!important;border:0!important;border-radius:0!important;outline-offset:3px;background:transparent!important;color:inherit!important;box-shadow:none!important;font:inherit;font-weight:inherit;line-height:inherit;white-space:nowrap}.column-sort:hover,.column-sort:active{border:0!important;background:transparent!important;box-shadow:none!important}.column-sort:hover .sort-label{text-decoration:underline;text-underline-offset:3px}.sort-arrow{display:inline-block;min-width:.8em;color:var(--muted);font-size:.78em;line-height:1}.column-sort.active .sort-arrow{color:var(--text)}html{font-size:16px}@media(max-width:800px){html{font-size:15px}}
 html[data-theme="light"] .sidebar-save.user-save{color:#355f73!important}html[data-theme="light"] .sidebar-save.user-save:hover{color:#274b5d!important}html[data-theme="dark"] .sidebar-save.user-save{color:#9fc0cf!important}html[data-theme="dark"] .sidebar-save.user-save:hover{color:#c0d7e1!important}
+.log-delete-tools{display:grid;grid-template-columns:minmax(190px,1fr) minmax(190px,1fr) auto;align-items:end;gap:10px;margin:14px 0}.log-delete-tools .field{margin:0}.log-delete-tools button{min-height:42px}.log-selection-tools{display:flex;align-items:center;gap:12px;margin:10px 0 4px}.log-selection-tools button{min-height:34px;padding:5px 10px;font-size:.82rem}.log-select-cell{width:42px!important;text-align:center!important}.log-select-cell input{width:17px;min-height:17px;margin:0;vertical-align:middle}.log-table th:nth-child(2),.log-table td:nth-child(2){width:245px;white-space:nowrap}@media(max-width:800px){.log-delete-tools{grid-template-columns:1fr}.log-delete-tools button{justify-self:start}.log-table th:nth-child(2),.log-table td:nth-child(2){width:205px}}
 </style></head><body>
 <section id="login" class="login card"><h1>NexRelay-sdjoint</h1><p class="sub">IG830 多通道短信中继平台 · 登录前请阅读并确认免责声明。</p><div class="disclaimer"><b>免责声明</b><p>本软件仅用于管理用户本人合法持有、获授权使用的设备、SIM 卡和短信。用户应遵守所在地法律、运营商协议及第三方平台规则，不得用于窃取隐私、未授权监控、垃圾信息或其他违法用途。软件按现状提供，设备参数修改及数据转发风险由实际操作者承担。</p></div><div class="check"><input id="disclaimer" type="checkbox"><label for="disclaimer">我已阅读、理解并同意上述免责声明</label></div><div class="field"><label>用户名</label><input id="username" autocomplete="username" value="admin"></div><div class="field"><label>密码</label><input id="token" type="password" autocomplete="current-password"></div><button onclick="login()">登录控制台</button></section>
 <div id="mobileBackdrop" class="mobile-backdrop hidden" onclick="toggleSidebar(false)"></div>
@@ -1400,7 +1459,7 @@ html[data-theme="light"] .sidebar-save.user-save{color:#355f73!important}html[da
 <section class="card"><h2>安全与运维</h2><div class="actions"><button class="secondary" onclick="downloadJson('/api/config/export','ig830-config.json')">导出脱敏配置</button><button class="secondary" onclick="downloadJson('/api/diagnostics','ig830-diagnostics.json')">导出诊断包</button><button class="secondary" onclick="showAudit()">查看审计日志</button><button class="secondary" onclick="openCredentials()">修改用户名和密码</button></div><div class="danger-zone"><div class="check confirm-check"><input id="serviceRestartConfirm" type="checkbox"><label for="serviceRestartConfirm">我了解页面会短暂中断，同意重启 NexRelay 服务</label></div><div class="actions"><button class="danger" onclick="restartService()">重启服务</button></div></div><p class="sub">USSD 与 SIM PIN 操作会根据模块响应执行；网络模式、频段、eSIM、VoWiFi 和数据拨号目前仅提供能力检测。</p></section>
 <section class="card"><h2>关于 NexRelay-sdjoint</h2><div class="status"><div class="metric">产品名称<b>NexRelay-sdjoint</b></div><div class="metric">软件版本<b id="appVersion">读取中</b></div><div class="metric">配置格式版本<b id="configSchema">读取中</b></div><div class="metric">部署方式<b>本地自托管</b></div></div><p class="sub">面向 IG830 的多通道短信中继与设备管理平台。配置、凭据和短信数据均存储在当前服务器中。</p></section>
 <section class="card wide"><h2>SIM、USSD 与高级网络能力</h2><div class="actions"><button class="secondary" onclick="loadCapabilities()">检测硬件能力</button></div><div id="capabilitySummary" class="capability-summary"><p class="sub">尚未检测。敏感标识只显示末四位。</p></div><details class="diagnostic-details"><summary>查看原始诊断信息</summary><pre id="capabilityText" class="sub">尚未检测</pre></details><div class="row"><div><div class="field"><label>USSD 代码</label><input id="ussdCode" placeholder="例如 *100#"></div><div class="check confirm-check"><input id="ussdConfirm" type="checkbox"><label for="ussdConfirm">我了解 USSD 可能变更运营商业务，同意执行</label></div><button class="danger" onclick="runUssd()">发送 USSD 指令</button></div><div><div class="field"><label>SIM PIN（不保存）</label><input id="simPin" type="password"></div><div class="check confirm-check"><input id="simPinConfirm" type="checkbox"><label for="simPinConfirm">我确认 PIN 正确，并同意只尝试一次</label></div><button class="danger" onclick="unlockPin()">解锁 SIM</button></div></div><p class="sub">网络模式、频段、eSIM、VoWiFi 和数据拨号目前仅提供能力检测；检测结果会列出全部可用的 ttyUSB 端口。</p></section>
-<section class="card wide log-card"><div class="log-card-head"><div><h2>最近事件</h2><p id="logSummary" class="sub">正在读取日志</p></div><button class="secondary" onclick="downloadLogs()">导出全部日志（CSV）</button></div><p class="sub">时间均按 Asia/Shanghai（UTC+8）显示。</p><div class="log-table-wrap"><table class="table log-table"><thead><tr><th>时间</th><th>事件</th></tr></thead><tbody id="logRows"><tr><td colspan="2" class="sub">暂无记录</td></tr></tbody></table></div><div id="logs" class="hidden"></div><div class="log-pagination"><button id="logPrev" class="secondary" onclick="changeLogPage(-1)">上一页</button><span id="logPageInfo" class="log-page-info">第 1 / 1 页</span><button id="logNext" class="secondary" onclick="changeLogPage(1)">下一页</button></div></section></div><footer class="site-footer"><h2>作者与版权</h2><div class="author-line"><span>NexRelay-sdjoint</span><span>作者：<a href="mailto:zhangzhen01@gmail.com">zhangzhen01@gmail.com</a></span><span>Copyright © <span id="copyrightYear">2026</span> NexRelay-sdjoint contributors</span><span>MIT License</span><span>本地自托管 · 数据由用户掌控</span></div></footer></main><div id="toast"></div>
+<section class="card wide log-card"><div class="log-card-head"><div><h2>最近事件</h2><p id="logSummary" class="sub">正在读取日志</p></div><div class="actions"><button class="secondary" onclick="downloadLogs()">导出全部日志（CSV）</button><button class="danger" onclick="deleteAllLogs()">删除全部日志</button></div></div><p class="sub">时间均按 Asia/Shanghai（UTC+8）显示。</p><div class="log-delete-tools"><div class="field"><label for="logRangeStart">开始时间</label><input id="logRangeStart" type="datetime-local"></div><div class="field"><label for="logRangeEnd">结束时间</label><input id="logRangeEnd" type="datetime-local"></div><button class="danger" onclick="deleteLogRange()">删除此时间段</button></div><div class="log-selection-tools"><button id="deleteSelectedLogs" class="danger" onclick="deleteSelectedLogs()" disabled>删除选中记录</button><span id="logSelectionSummary" class="sub">尚未选择记录</span></div><div class="log-table-wrap"><table class="table log-table"><thead><tr><th class="log-select-cell"><input id="selectAllLogs" type="checkbox" onchange="toggleAllLogs(this.checked)" aria-label="选择当前页全部日志"></th><th>时间</th><th>事件</th></tr></thead><tbody id="logRows"><tr><td colspan="3" class="sub">暂无记录</td></tr></tbody></table></div><div id="logs" class="hidden"></div><div class="log-pagination"><button id="logPrev" class="secondary" onclick="changeLogPage(-1)">上一页</button><span id="logPageInfo" class="log-page-info">第 1 / 1 页</span><button id="logNext" class="secondary" onclick="changeLogPage(1)">下一页</button></div></section></div><footer class="site-footer"><h2>作者与版权</h2><div class="author-line"><span>NexRelay-sdjoint</span><span>作者：<a href="mailto:zhangzhen01@gmail.com">zhangzhen01@gmail.com</a></span><span>Copyright © <span id="copyrightYear">2026</span> NexRelay-sdjoint contributors</span><span>MIT License</span><span>本地自托管 · 数据由用户掌控</span></div></footer></main><div id="toast"></div>
 <div id="credentialsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="credentialsTitle"><div class="modal-card"><div class="modal-head"><h2 id="credentialsTitle">修改用户名和密码</h2><button type="button" class="modal-close" onclick="closeCredentials()" aria-label="关闭">×</button></div><div class="field"><label for="newUsername">新用户名</label><input id="newUsername" autocomplete="username"></div><div class="field"><label for="newPassword">新密码（至少 10 位）</label><input id="newPassword" type="password" autocomplete="new-password"></div><div class="field"><label for="confirmPassword">确认新密码</label><input id="confirmPassword" type="password" autocomplete="new-password"></div><p id="credentialsError" class="bad hidden"></p><div class="actions"><button class="secondary" onclick="closeCredentials()">取消</button><button onclick="saveCredentials()">保存新凭据</button></div></div></div>
 <div id="auditModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auditTitle"><div class="modal-card audit-card"><div class="modal-head"><h2 id="auditTitle">审计日志</h2><button type="button" class="modal-close" onclick="closeAudit()" aria-label="关闭">×</button></div><div class="message-table-wrap"><table class="table"><thead><tr><th>时间</th><th>操作</th><th>说明</th></tr></thead><tbody id="auditRows"><tr><td colspan="3" class="sub">正在读取</td></tr></tbody></table></div></div></div>
 <script>
@@ -1442,7 +1501,13 @@ setInterval(()=>{if(!document.hidden)refreshDeviceStatus()},3000);
 function collect(){let c={};for(let k of fields){let e=$(k);c[k]=e.type==='checkbox'?e.checked:e.value}c.poll_interval=Number(c.poll_interval);return c}
 async function save(){try{let c=await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});channelTestState={};fill(c);await refreshAll();await refreshTelegramReplyStatus();msg('配置已保存；仅修改的通道需重新测试')}catch(e){msg(e.message,true)}}
 async function testChannel(channel,label){try{let r=await api('/api/test-channel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel})});channelTestState[channel]='success';updateChannelDots(lastChannelConfig);msg(`${label}测试成功，HTTP ${r.status}`)}catch(e){channelTestState[channel]='error';updateChannelDots(lastChannelConfig);msg(`${label}测试失败：${e.message}`,true)}}
-async function loadLogs(page=1){try{let r=await api(`/api/logs?page=${page}&page_size=${LOG_PAGE_SIZE}`);logPage=r.page;logPages=r.pages;$('logRows').innerHTML=r.items.length?r.items.map(x=>`<tr><td>${esc(localTime(x.time))}</td><td><div class="log-event"><span class="log-kind">${esc(logKindLabel(x.kind))}</span><span class="log-message">${esc(localizedLogMessage(x.message))}</span></div></td></tr>`).join(''):'<tr><td colspan="2" class="sub">暂无日志记录</td></tr>';$('logSummary').textContent=`共 ${r.total} 条记录 · 每页 ${r.page_size} 条`;$('logPageInfo').textContent=`第 ${r.page} / ${r.pages} 页`;$('logPrev').disabled=r.page<=1;$('logNext').disabled=r.page>=r.pages}catch(e){msg('日志加载失败：'+e.message,true)}}
+async function loadLogs(page=1){try{let r=await api(`/api/logs?page=${page}&page_size=${LOG_PAGE_SIZE}`);logPage=r.page;logPages=r.pages;$('logRows').innerHTML=r.items.length?r.items.map(x=>`<tr><td class="log-select-cell"><input class="log-row-select" type="checkbox" value="${Number(x._id)}" onchange="updateLogSelection()" aria-label="选择此日志"></td><td>${esc(localTime(x.time))}</td><td><div class="log-event"><span class="log-kind">${esc(logKindLabel(x.kind))}</span><span class="log-message">${esc(localizedLogMessage(x.message))}</span></div></td></tr>`).join(''):'<tr><td colspan="3" class="sub">暂无日志记录</td></tr>';$('logSummary').textContent=`共 ${r.total} 条记录 · 每页 ${r.page_size} 条`;$('logPageInfo').textContent=`第 ${r.page} / ${r.pages} 页`;$('logPrev').disabled=r.page<=1;$('logNext').disabled=r.page>=r.pages;$('selectAllLogs').checked=false;updateLogSelection()}catch(e){msg('日志加载失败：'+e.message,true)}}
+function updateLogSelection(){let boxes=[...document.querySelectorAll('.log-row-select')],selected=boxes.filter(x=>x.checked);$('deleteSelectedLogs').disabled=!selected.length;$('logSelectionSummary').textContent=selected.length?`已选择 ${selected.length} 条记录`:'尚未选择记录';$('selectAllLogs').checked=boxes.length>0&&selected.length===boxes.length;$('selectAllLogs').indeterminate=selected.length>0&&selected.length<boxes.length}
+function toggleAllLogs(checked){document.querySelectorAll('.log-row-select').forEach(x=>x.checked=checked);updateLogSelection()}
+async function deleteLogRecords(payload,confirmation){if(!confirm(confirmation))return;try{let r=await api('/api/logs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,confirm:'确认删除日志'})});msg(`已删除 ${r.deleted} 条日志`);await loadLogs(1)}catch(e){msg('删除日志失败：'+e.message,true)}}
+function deleteSelectedLogs(){let ids=[...document.querySelectorAll('.log-row-select:checked')].map(x=>Number(x.value));if(!ids.length)return msg('请先选择需要删除的日志',true);deleteLogRecords({mode:'selected',ids},`确定删除选中的 ${ids.length} 条日志吗？此操作无法撤销。`)}
+function deleteLogRange(){let start=$('logRangeStart').value,end=$('logRangeEnd').value;if(!start||!end)return msg('请选择开始时间和结束时间',true);let startDate=new Date(start),endDate=new Date(end);if(startDate>endDate)return msg('开始时间不能晚于结束时间',true);deleteLogRecords({mode:'range',start:startDate.toISOString(),end:endDate.toISOString()},'确定删除此时间段内的全部日志吗？此操作无法撤销。')}
+function deleteAllLogs(){deleteLogRecords({mode:'all'},'确定删除全部运行日志吗？此操作无法撤销。')}
 function changeLogPage(delta){let target=Math.max(1,Math.min(logPages,logPage+delta));if(target!==logPage)loadLogs(target)}
 async function downloadLogs(){try{let r=await fetch('/api/logs/export.csv',{headers:{'X-Admin-Token':tok,'X-Admin-Username':user}});if(!r.ok){let j=await r.json().catch(()=>({}));throw Error(j.error||('HTTP '+r.status))}let blob=await r.blob();let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='nexrelay-events.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);msg('全部日志 CSV 已下载')}catch(e){msg('日志下载失败：'+e.message,true)}}
 async function readUsbConfig(){try{let u=await api('/api/modem/usb-config');$('usbIdentity').textContent=u.identity||'未知';$('usbCurrent').textContent=`${u.vid}:${u.pid}`;$('usbCurrent').className=u.is_factory?'warn':u.is_compatible?'ok':'bad';$('usbRaw').value=u.raw;$('usbBackup').textContent=u.backup_exists?'已安全保存':'未保存';$('usbBackup').className=u.backup_exists?'ok':'bad';msg('已读取参数并保存符合条件的出厂备份')}catch(e){msg('读取失败：'+e.message,true)}}
@@ -1459,7 +1524,7 @@ function setMessageSort(field){if(messageSortField===field)messageSortOrder=mess
 function clearMessageSearch(){if($('messageSearch'))$('messageSearch').value='';loadMessages()}
 async function retryDelivery(id){try{await api('/api/delivery/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});msg('已加入立即重试队列');loadMessages()}catch(e){msg(e.message,true)}}
 async function downloadJson(path,name){try{let data=await api(path);let blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href)}catch(e){msg(e.message,true)}}
-const auditActionLabels={'config.update':'配置更新','sms.send':'发送短信','delivery.retry':'重试投递','sim.unlock':'解锁 SIM','admin.credentials':'修改登录凭据','admin.credentials_changed':'修改登录凭据','admin.rotate_token':'更换管理令牌','service.restart':'重启服务','usb.config.apply':'写入 USB 参数','usb.config.restore':'恢复 USB 参数','modem.restart':'重启 IG830','ussd.run':'执行 USSD'};
+const auditActionLabels={'config.update':'配置更新','sms.send':'发送短信','logs.delete':'删除运行日志','delivery.retry':'重试投递','sim.unlock':'解锁 SIM','admin.credentials':'修改登录凭据','admin.credentials_changed':'修改登录凭据','admin.rotate_token':'更换管理令牌','service.restart':'重启服务','usb.config.apply':'写入 USB 参数','usb.config.restore':'恢复 USB 参数','modem.restart':'重启 IG830','ussd.run':'执行 USSD'};
 function auditDetail(detail){if(!detail)return '—';let text=String(detail);text=text.replace(/enabled=(True|False)/g,(_,v)=>`转发启用：${v==='True'?'是':'否'}`).replace(/recipient=([^ ]+)/g,'接收方：$1').replace(/reference=([^ ]+)/g,'参考号：$1').replace(/username=([^ ]+)/g,'用户名：$1').replace(/PIN redacted/g,'PIN 已隐藏').replace(/code redacted/g,'USSD 代码已隐藏');return text.replace(/\s+(?=(参考号|用户名)：)/g,' · ')}
 async function showAudit(){try{let rows=await api('/api/audit');$('auditRows').innerHTML=rows.length?rows.slice(0,100).map(x=>`<tr><td>${esc(localTime(x.created_at))}</td><td>${esc(auditActionLabels[x.action]||x.action)}</td><td>${esc(auditDetail(x.detail))}</td></tr>`).join(''):'<tr><td colspan="3" class="sub">暂无审计记录</td></tr>';$('auditModal').classList.remove('hidden')}catch(e){msg(e.message,true)}}
 function closeAudit(){$('auditModal').classList.add('hidden')}
@@ -1684,13 +1749,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.require_auth():
             return
-        if self.path not in ("/api/test-webhook", "/api/test-channel", "/api/sms/send", "/api/modem/usb-config/apply", "/api/modem/usb-config/restore", "/api/modem/restart", "/api/modem/ussd", "/api/modem/unlock-pin", "/api/delivery/retry", "/api/admin/rotate-token", "/api/admin/credentials", "/api/service/restart"):
+        if self.path not in ("/api/test-webhook", "/api/test-channel", "/api/sms/send", "/api/logs/delete", "/api/modem/usb-config/apply", "/api/modem/usb-config/restore", "/api/modem/restart", "/api/modem/ussd", "/api/modem/unlock-pin", "/api/delivery/retry", "/api/admin/rotate-token", "/api/admin/credentials", "/api/service/restart"):
             return self.send_json({"error": "未找到"}, 404)
         operation_channel = ""
         try:
             if self.path == "/api/sms/send":
                 body = self.read_json()
                 result = send_outbound_sms(body.get("recipient", ""), body.get("message", ""), body.get("confirm", ""), self.client_address[0])
+            elif self.path == "/api/logs/delete":
+                body = self.read_json()
+                if body.get("confirm") != "确认删除日志":
+                    raise ValueError("删除确认无效")
+                mode = str(body.get("mode", ""))
+                deleted = delete_logs(mode, body.get("ids"), body.get("start", ""), body.get("end", ""))
+                DB.audit("logs.delete", f"mode={mode} deleted={deleted}", self.client_address[0])
+                result = {"ok": True, "deleted": deleted}
             elif self.path == "/api/modem/ussd":
                 body=self.read_json(); result=run_ussd(body.get("code",""),body.get("confirm",""))
             elif self.path == "/api/modem/unlock-pin":
