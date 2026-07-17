@@ -1,0 +1,23 @@
+name: Build release archive
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build archive
+        run: |
+          chmod +x install.sh uninstall.sh server.py
+          mkdir -p dist/ig830-sms-control
+          cp server.py install.sh uninstall.sh README.md LICENSE dist/ig830-sms-control/
+          tar -C dist -czf "dist/ig830-sms-control-${GITHUB_REF_NAME}-linux.tar.gz" ig830-sms-control
+          sha256sum dist/*.tar.gz > dist/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS

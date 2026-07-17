@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+config.json
+state.json
+events.log
+admin-token.txt
+.DS_Store
+.codex-ssh/
+dist/

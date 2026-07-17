@@ -1,0 +1,14 @@
+[Unit]
+Description=IG830 SMS Forwarding Control Panel
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ig830-sms-control
+ExecStart=/usr/bin/python3 %h/ig830-sms-control/server.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target
