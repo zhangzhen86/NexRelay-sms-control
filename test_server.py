@@ -17,7 +17,7 @@ class SmsControlTests(unittest.TestCase):
             self.assertNotIn(legacy, server.HTML)
         for current in (
             "数据保留", "短信收件箱与转发状态", "微信通知（PushPlus）",
-            "运行日志", "credentialsModal", "auditModal", "capabilitySummary",
+            "运行日志", "credentialsModal", "auditModal", "capabilitySummary", "device_online?'设备离线'",
         ):
             self.assertIn(current, server.HTML)
 
@@ -137,6 +137,35 @@ class SmsControlTests(unittest.TestCase):
     def test_parse_local_phone_number(self):
         self.assertEqual(server.parse_cnum('\r\n+CNUM: "","+8613800000000",145\r\nOK\r\n'), "+8613800000000")
         self.assertEqual(server.parse_cnum("\r\nOK\r\n"), "")
+
+    def test_device_status_clears_stale_network_data_when_modem_is_removed(self):
+        original_runtime = dict(server.RUNTIME)
+        try:
+            server.RUNTIME.update({
+                "sim_ready": True,
+                "phone_number": "+8613800000000",
+                "signal_rssi": 20,
+                "signal_dbm": -73,
+                "signal_level": 4,
+                "operator": "CHINA MOBILE",
+                "registered": True,
+                "registration": "已注册（本地）",
+            })
+            with tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(server, "load_config", return_value={"serial_port": str(Path(directory) / "ttyUSB2")}), \
+                    mock.patch.object(server, "detect_ig830_usb", return_value={"present": False, "id": "", "mode": ""}):
+                status = server.device_status()
+            self.assertFalse(status["device_online"])
+            self.assertFalse(status["runtime"]["sim_ready"])
+            self.assertEqual(status["runtime"]["phone_number"], "")
+            self.assertIsNone(status["runtime"]["signal_dbm"])
+            self.assertEqual(status["runtime"]["signal_level"], 0)
+            self.assertEqual(status["runtime"]["operator"], "")
+            self.assertFalse(status["runtime"]["registered"])
+            self.assertEqual(status["runtime"]["registration"], "设备离线")
+        finally:
+            server.RUNTIME.clear()
+            server.RUNTIME.update(original_runtime)
 
     def test_builds_single_part_ucs2_sms_submit_pdu(self):
         message = "您的验证码是 123456"
