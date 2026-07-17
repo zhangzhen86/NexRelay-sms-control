@@ -13,6 +13,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 sudo install -d -m 0755 "$APP_DIR"
 sudo install -m 0755 "$SCRIPT_DIR/server.py" "$APP_DIR/server.py"
+sudo install -m 0644 "$SCRIPT_DIR/storage.py" "$APP_DIR/storage.py"
 sudo install -d -o "$APP_USER" -g "$APP_USER" -m 0700 "$DATA_DIR"
 sudo usermod -aG dialout "$APP_USER"
 
@@ -40,7 +41,7 @@ EOF
 
 sudo tee /etc/systemd/system/ig830-sms-control.service >/dev/null <<EOF
 [Unit]
-Description=IG830 SMS Forwarding Control Panel
+Description=NexRelay-sdjoint SMS Relay Platform
 After=network-online.target ig830-bind-driver.service
 Wants=network-online.target
 [Service]
@@ -61,5 +62,6 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now ig830-bind-driver.service ig830-sms-control.service
 echo "安装完成：http://$(hostname -I | awk '{print $1}'):8765"
-echo "管理令牌：$(sudo cat "$DATA_DIR/admin-token.txt")"
+echo "首次登录用户名：admin"
+echo "首次登录密码：$(sudo cat "$DATA_DIR/admin-token.txt")"
 echo "重新登录一次后，dialout 组权限将完全生效。"

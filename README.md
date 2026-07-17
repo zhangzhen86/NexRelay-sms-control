@@ -1,18 +1,23 @@
-# IG830 SMS Control
+# NexRelay-sdjoint
 
-面向 DJI/Baiwang IG830（USB ID `2ca3:4006`）的自托管短信接收与 Webhook 转发服务。提供中文 Web 控制台、发送方与关键词过滤、鉴权 Header、失败重试、本地去重及可选的转发后删除。
+面向 DJI/Baiwang IG830 的自托管多通道短信中继平台。提供中文 Web 控制台、设备管理、短信中心、发送方与关键词过滤、失败重试、本地去重、长短信分片合并及安全的 Telegram 反向回复。
 
-> 项目只用于管理你本人合法持有的 SIM 卡和短信。管理令牌、Webhook 密钥、短信内容与日志不会提交到 GitHub。
+> 项目只用于管理你本人合法持有的 SIM 卡和短信。登录密码、Webhook 密钥、短信内容与日志不会提交到 GitHub。
 
 ## 功能
 
 - 自动绑定 IG830 的 Linux `option` 串口驱动
-- 自动发现并使用 `/dev/ttyUSB2`（页面中可修改）
+- 默认使用 `/dev/ttyUSB2`（可在页面中修改）
 - 中文响应式配置页面
-- POST/PUT Webhook 与自定义鉴权 Header
+- 钉钉、飞书、企业微信、Telegram、PushPlus 微信通知、邮件、Bark、ntfy 与 HTTP-MQTT 桥接
+- POST/PUT Webhook 与自定义鉴权请求头
 - 发送方白名单、黑名单和关键词规则
-- 本地去重，失败时保留短信供下次重试
-- 可选“转发成功后删除模块短信”
+- PDU 模式读取中文短信，并根据 UDH 分片信息合并长短信
+- 本地去重，按通道记录投递结果并对失败任务退避重试
+- 短信中心可人工编写并发送单条中文短信，带号码校验、发送确认、30 秒冷却和脱敏审计
+- Telegram 中引用回复已转发的短信，可通过当前 SIM 卡反向发送给原发件人
+- 主动发送不支持群发、定时或自动重试，短信正文不会写入平台日志
+- 日间/夜间主题、移动端抽屉导航、运行日志、审计日志与脱敏诊断导出
 - systemd 后台运行和开机启动
 - 无 Python 第三方依赖
 
@@ -25,11 +30,11 @@
 
 ## 下载与安装
 
-从 Releases 下载最新的 `ig830-sms-control-*-linux.tar.gz`：
+从 Releases 下载最新的 `NexRelay-sms-control-*-linux.tar.gz`：
 
 ```bash
-tar -xzf ig830-sms-control-*-linux.tar.gz
-cd ig830-sms-control
+tar -xzf NexRelay-sms-control-*-linux.tar.gz
+cd NexRelay-sms-control
 chmod +x install.sh
 ./install.sh
 ```
@@ -48,7 +53,7 @@ chmod +x install.sh
 http://你的服务器IP:8765
 ```
 
-终端会显示首次登录所需的随机管理令牌。也可在服务器查看：
+首次登录用户名为 `admin`，终端显示的随机字符串是初始密码。也可在服务器查看：
 
 ```bash
 sudo cat /var/lib/ig830-sms-control/admin-token.txt
@@ -78,7 +83,7 @@ ls -l /dev/ttyUSB*
 }
 ```
 
-只有 HTTP 2xx 响应才被视为成功。失败的短信不会加入去重记录，下个轮询周期会重试。
+只有 HTTP 2xx 响应才被视为成功。短信只保存一份，平台会按通道记录成功或失败状态；失败任务按退避间隔自动重试，也可以在短信中心手动重试。
 
 ## 常用命令
 
@@ -97,13 +102,15 @@ sudo systemctl restart ig830-sms-control
 ## 安全建议
 
 - 默认端口为 `8765`，建议仅在内网或 VPN 中访问。
-- 不要把 `admin-token.txt`、`config.json`、`events.log` 上传到公开仓库。
+- 不要把 `admin-token.txt`、`config.json`、`events.log` 上传到公开仓库；首次登录后应修改用户名和密码。
 - Webhook 应优先使用 HTTPS，并设置独立的 Bearer Token。
-- 首次测试时不要启用“转发成功后删除”，确认稳定后再开启。
+- 第三方通道的 Token、Webhook 和邮箱授权码均视同密码，截图或求助时应先遮盖。
 
 ## 当前硬件说明
 
-IG830 的不同批次可能使用不同 AT 端口。如果 `/dev/ttyUSB2` 无响应，可在页面改为 `/dev/ttyUSB3` 后重试。项目不会执行永久修改 USB VID/PID 的 `AT+QCFG="usbcfg"` 命令。
+IG830 的不同批次可能使用不同 AT 端口。如果 `/dev/ttyUSB2` 无响应，可在页面改为 `/dev/ttyUSB3` 后重试。
+
+“设备管理”中的 USB 兼容模式转换属于高风险高级操作，会永久修改模块的 `AT+QCFG="usbcfg"` 参数。平台会先读取并保存本机出厂参数，只替换 VID/PID，并要求用户分别确认写入和重启。UTM 快照或 Ubuntu 备份无法回滚模块内部参数；请勿把其他设备的参数直接用于本机。
 
 ## 许可证
 

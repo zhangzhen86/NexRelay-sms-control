@@ -1,5 +1,5 @@
 [Unit]
-Description=IG830 SMS Forwarding Control Panel
+Description=NexRelay-sdjoint SMS Relay Platform
 After=network-online.target
 
 [Service]

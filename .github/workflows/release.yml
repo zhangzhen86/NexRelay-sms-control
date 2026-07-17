@@ -12,9 +12,9 @@ jobs:
       - name: Build archive
         run: |
           chmod +x install.sh uninstall.sh server.py
-          mkdir -p dist/ig830-sms-control
-          cp server.py install.sh uninstall.sh README.md LICENSE dist/ig830-sms-control/
-          tar -C dist -czf "dist/ig830-sms-control-${GITHUB_REF_NAME}-linux.tar.gz" ig830-sms-control
+          mkdir -p dist/NexRelay-sms-control
+          cp server.py storage.py install.sh uninstall.sh README.md LICENSE dist/NexRelay-sms-control/
+          tar -C dist -czf "dist/NexRelay-sms-control-${GITHUB_REF_NAME}-linux.tar.gz" NexRelay-sms-control
           sha256sum dist/*.tar.gz > dist/SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:

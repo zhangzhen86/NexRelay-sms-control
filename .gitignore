@@ -4,6 +4,7 @@ config.json
 state.json
 events.log
 admin-token.txt
+ig830.db*
 .DS_Store
 .codex-ssh/
 dist/
