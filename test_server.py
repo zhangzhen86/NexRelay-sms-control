@@ -20,6 +20,9 @@ class SmsControlTests(unittest.TestCase):
             "运行日志", "credentialsModal", "auditModal", "capabilitySummary", "device_online?'设备离线'",
         ):
             self.assertIn(current, server.HTML)
+        self.assertNotIn('id="smsSendConfirm"', server.HTML)
+        self.assertNotIn("$('smsSendConfirm')", server.HTML)
+        self.assertIn("border:0!important", server.HTML)
 
     def test_filter_rules(self):
         cfg = dict(server.DEFAULTS, sender_allow="10086,+138", sender_block="spam", keyword_include="验证码,code", keyword_exclude="广告")
