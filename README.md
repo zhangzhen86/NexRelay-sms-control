@@ -1,4 +1,4 @@
-# NexRelay-sdjoint
+# NexRelay-sdjoint 短信托管转发功能
 
 面向 DJI/Baiwang IG830 的自托管多通道短信中继平台。提供中文 Web 控制台、设备管理、短信中心、发送方与关键词过滤、失败重试、本地去重、长短信分片合并及安全的 Telegram 反向回复。
 
