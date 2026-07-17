@@ -25,6 +25,9 @@ class SmsControlTests(unittest.TestCase):
         self.assertIn("border:0!important", server.HTML)
         self.assertNotIn('onclick="refreshAll()">刷新状态', server.HTML)
         self.assertIn("refreshDeviceStatus()},3000", server.HTML)
+        self.assertIn("async function refreshPageData(page)", server.HTML)
+        self.assertIn("await refreshPageData(page)", server.HTML)
+        self.assertIn("displayPage(page)", server.HTML)
 
     def test_filter_rules(self):
         cfg = dict(server.DEFAULTS, sender_allow="10086,+138", sender_block="spam", keyword_include="验证码,code", keyword_exclude="广告")
