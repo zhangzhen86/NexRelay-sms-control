@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -188,7 +189,24 @@ class Storage:
             self.db.execute("""UPDATE telegram_replies SET status=?,last_error=?,updated_at=?
               WHERE update_id=?""", (status, str(error)[:1000], self.now(), int(update_id)))
 
-    def list_messages(self, query="", page=1, page_size=30):
+    @staticmethod
+    def _message_timestamp(value):
+        raw = str(value or "").strip()
+        modem_time = re.fullmatch(r"(\d{2})/(\d{2})/(\d{2}),(\d{2}):(\d{2}):(\d{2})([+-])(\d{2})", raw)
+        if modem_time:
+            parts = [int(modem_time.group(index)) for index in range(1, 7)]
+            offset_minutes = int(modem_time.group(8)) * 15 * (1 if modem_time.group(7) == "+" else -1)
+            zone = timezone(timedelta(minutes=offset_minutes))
+            return datetime(2000 + parts[0], *parts[1:], tzinfo=zone).timestamp()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except ValueError:
+            return None
+
+    def list_messages(self, query="", page=1, page_size=30, order="desc"):
         where, args = "", []
         if query:
             where = "WHERE m.sender LIKE ? OR m.body LIKE ?"
@@ -198,11 +216,19 @@ class Storage:
             rows = self.db.execute(f"""SELECT m.*,
               COALESCE(json_group_array(json_object('id',d.id,'channel',d.channel,'status',d.status,'attempts',d.attempts,'error',d.last_error)),'[]') deliveries
               FROM messages m LEFT JOIN deliveries d ON d.message_id=m.id {where}
-              GROUP BY m.id ORDER BY m.id DESC LIMIT ? OFFSET ?""", (*args, page_size, (page-1)*page_size)).fetchall()
+              GROUP BY m.id""", args).fetchall()
             out=[]
             for row in rows:
                 item=dict(row); item["deliveries"]=json.loads(item["deliveries"]); out.append(item)
-            return {"items":out,"total":total,"page":page,"page_size":page_size}
+            def sort_key(item):
+                timestamp = self._message_timestamp(item.get("received_at"))
+                if timestamp is None:
+                    timestamp = self._message_timestamp(item.get("stored_at"))
+                return (timestamp if timestamp is not None else float("-inf"), item["id"])
+            descending = str(order).lower() != "asc"
+            out.sort(key=sort_key, reverse=descending)
+            start = (page - 1) * page_size
+            return {"items":out[start:start + page_size],"total":total,"page":page,"page_size":page_size,"sort":"desc" if descending else "asc"}
 
     def stats(self):
         with self.lock:

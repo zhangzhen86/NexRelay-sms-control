@@ -340,6 +340,14 @@ class SmsControlTests(unittest.TestCase):
             self.assertEqual(db.list_messages()["items"][0]["body"], "你好，验证码是1234")
             self.assertEqual(db.transform_message_bodies(server.decode_modem_text), 0)
 
+    def test_message_list_sorts_by_received_time_in_both_directions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Storage(Path(directory) / "test.db")
+            db.store_message("newer-first", {"index": 1, "sender": "10086", "message": "较新", "received_at": "26/07/18,01:09:24+32"})
+            db.store_message("older-second", {"index": 2, "sender": "10086", "message": "较早", "received_at": "26/07/17,23:45:16+32"})
+            self.assertEqual([row["body"] for row in db.list_messages(order="desc")["items"]], ["较新", "较早"])
+            self.assertEqual([row["body"] for row in db.list_messages(order="asc")["items"]], ["较早", "较新"])
+
     def test_deduplicates_same_physical_message_and_keeps_success(self):
         with tempfile.TemporaryDirectory() as directory:
             db = Storage(Path(directory) / "test.db")
