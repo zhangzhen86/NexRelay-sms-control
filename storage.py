@@ -206,7 +206,7 @@ class Storage:
         except ValueError:
             return None
 
-    def list_messages(self, query="", page=1, page_size=30, order="desc"):
+    def list_messages(self, query="", page=1, page_size=30, order="desc", sort_by="time"):
         where, args = "", []
         if query:
             where = "WHERE m.sender LIKE ? OR m.body LIKE ?"
@@ -220,15 +220,26 @@ class Storage:
             out=[]
             for row in rows:
                 item=dict(row); item["deliveries"]=json.loads(item["deliveries"]); out.append(item)
-            def sort_key(item):
+            def time_key(item):
                 timestamp = self._message_timestamp(item.get("received_at"))
                 if timestamp is None:
                     timestamp = self._message_timestamp(item.get("stored_at"))
                 return (timestamp if timestamp is not None else float("-inf"), item["id"])
+            def status_key(item):
+                ranks = {"failed": 1, "pending": 2, "success": 3}
+                statuses = [ranks.get(delivery.get("status"), 4) for delivery in item["deliveries"] if delivery.get("channel")]
+                return (min(statuses) if statuses else 0, item["id"])
+            keys = {
+                "time": time_key,
+                "sender": lambda item: (str(item.get("sender") or "").casefold(), item["id"]),
+                "body": lambda item: (str(item.get("body") or "").casefold(), item["id"]),
+                "status": status_key,
+            }
+            sort_by = sort_by if sort_by in keys else "time"
             descending = str(order).lower() != "asc"
-            out.sort(key=sort_key, reverse=descending)
+            out.sort(key=keys[sort_by], reverse=descending)
             start = (page - 1) * page_size
-            return {"items":out[start:start + page_size],"total":total,"page":page,"page_size":page_size,"sort":"desc" if descending else "asc"}
+            return {"items":out[start:start + page_size],"total":total,"page":page,"page_size":page_size,"sort_by":sort_by,"sort":"desc" if descending else "asc"}
 
     def stats(self):
         with self.lock:

@@ -343,10 +343,34 @@ class SmsControlTests(unittest.TestCase):
     def test_message_list_sorts_by_received_time_in_both_directions(self):
         with tempfile.TemporaryDirectory() as directory:
             db = Storage(Path(directory) / "test.db")
-            db.store_message("newer-first", {"index": 1, "sender": "10086", "message": "较新", "received_at": "26/07/18,01:09:24+32"})
-            db.store_message("older-second", {"index": 2, "sender": "10086", "message": "较早", "received_at": "26/07/17,23:45:16+32"})
-            self.assertEqual([row["body"] for row in db.list_messages(order="desc")["items"]], ["较新", "较早"])
-            self.assertEqual([row["body"] for row in db.list_messages(order="asc")["items"]], ["较早", "较新"])
+            db.store_message("newer-first", {"index": 1, "sender": "10010", "message": "beta", "received_at": "26/07/18,01:09:24+32"})
+            db.store_message("older-second", {"index": 2, "sender": "10086", "message": "alpha", "received_at": "26/07/17,23:45:16+32"})
+            self.assertEqual([row["body"] for row in db.list_messages(order="desc")["items"]], ["beta", "alpha"])
+            self.assertEqual([row["body"] for row in db.list_messages(order="asc")["items"]], ["alpha", "beta"])
+            self.assertEqual([row["sender"] for row in db.list_messages(order="asc", sort_by="sender")["items"]], ["10010", "10086"])
+            self.assertEqual([row["body"] for row in db.list_messages(order="asc", sort_by="body")["items"]], ["alpha", "beta"])
+
+    def test_message_list_sorts_by_delivery_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Storage(Path(directory) / "test.db")
+            none_id = db.store_message("none", {"index": 1, "sender": "1", "message": "none", "received_at": "26/07/18,01:00:00+32"})
+            failed_id = db.store_message("failed", {"index": 2, "sender": "2", "message": "failed", "received_at": "26/07/18,01:01:00+32"})
+            pending_id = db.store_message("pending", {"index": 3, "sender": "3", "message": "pending", "received_at": "26/07/18,01:02:00+32"})
+            success_id = db.store_message("success", {"index": 4, "sender": "4", "message": "success", "received_at": "26/07/18,01:03:00+32"})
+            self.assertTrue(none_id)
+            for message_id in (failed_id, pending_id, success_id):
+                db.enqueue(message_id, ["telegram"])
+            deliveries = {row["message_id"]: row for row in db.due_deliveries()}
+            db.delivery_result(deliveries[failed_id]["id"], False, "failed")
+            db.delivery_result(deliveries[success_id]["id"], True)
+            self.assertEqual(
+                [row["body"] for row in db.list_messages(order="asc", sort_by="status")["items"]],
+                ["none", "failed", "pending", "success"],
+            )
+            self.assertEqual(
+                [row["body"] for row in db.list_messages(order="desc", sort_by="status")["items"]],
+                ["success", "pending", "failed", "none"],
+            )
 
     def test_deduplicates_same_physical_message_and_keeps_success(self):
         with tempfile.TemporaryDirectory() as directory:
