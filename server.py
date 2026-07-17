@@ -36,6 +36,8 @@ LOCK = threading.RLock()
 MODEM_LOCK = threading.Lock()
 OUTBOUND_SMS_COOLDOWN = 30
 LAST_OUTBOUND_SMS_AT = 0.0
+DEVICE_ONLINE_STATE = None
+LAST_POLL_ERROR = ""
 RUNTIME = {
     "last_poll": None, "last_error": "", "forwarded": 0,
     "sim_ready": False, "signal_rssi": None, "signal_dbm": None,
@@ -1222,6 +1224,7 @@ def telegram_reply_worker():
 
 
 def worker():
+    global LAST_POLL_ERROR
     while True:
         cfg = load_config()
         try:
@@ -1238,9 +1241,13 @@ def worker():
                     DB.delivery_result(delivery["id"], False, str(channel_error))
                     RUNTIME["channel_errors"][delivery["channel"]] = str(channel_error)[:300]
             RUNTIME["last_error"] = ""
+            LAST_POLL_ERROR = ""
         except Exception as e:
             RUNTIME["last_error"] = str(e)
-            log_event("error", "短信轮询失败", error=str(e))
+            error_text = str(e)
+            if error_text != LAST_POLL_ERROR:
+                log_event("error", "短信轮询失败", error=error_text)
+                LAST_POLL_ERROR = error_text
         RUNTIME["last_poll"] = utcnow()
         try:
             DB.add_signal(RUNTIME)
@@ -1271,6 +1278,7 @@ def device_status():
     exists = Path(port).exists()
     usb = detect_ig830_usb()
     device_online = bool(usb["present"] and exists)
+    record_device_transition(device_online, usb.get("id", ""), port)
     if not device_online:
         clear_network_status()
     with LOCK:
@@ -1288,6 +1296,29 @@ def device_status():
         "version": APP_VERSION,
         "config_schema": CONFIG_SCHEMA_VERSION,
     }
+
+
+def record_device_transition(online, usb_id="", port=""):
+    global DEVICE_ONLINE_STATE
+    online = bool(online)
+    with LOCK:
+        if DEVICE_ONLINE_STATE is online:
+            return False
+        DEVICE_ONLINE_STATE = online
+    if online:
+        log_event("hardware", "IG830 设备已上线", usb_id=usb_id, serial_port=port)
+    else:
+        log_event("hardware", "IG830 设备已离线")
+    return True
+
+
+def device_monitor():
+    while True:
+        try:
+            device_status()
+        except Exception as error:
+            RUNTIME["last_error"] = str(error)
+        time.sleep(3)
 
 
 def test_webhook(cfg):
@@ -1349,7 +1380,7 @@ html[data-theme="light"] .nav button{background:transparent;color:#1d1d1f}html[d
 <button data-page="settings"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1h-4v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1v-4H3A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.1h4V3A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.2.4.5.8.9 1 .3.2.7.4 1.1.4h.1v4h-.1a1.7 1.7 0 0 0-1.6 1.1Z"/></svg></span><span class="nav-label">系统设置</span></button>
 </div><div class="userbox"><div class="user-divider"></div><div class="user-identity-row"><div class="user-identity"><b id="sidebarUser">admin</b><div class="sub">Administrator</div></div><button class="sidebar-save user-save" onclick="save()" title="保存全部配置" aria-label="保存全部配置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l3 3v15H4V4a1 1 0 0 1 1-1Z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></svg><span>保存</span></button></div><div class="actions"><button class="secondary" onclick="openCredentials()">修改凭据</button><button class="secondary" onclick="logout()">退出</button></div></div></aside>
 <main id="app" class="wrap hidden"><div class="mobile-bar"><button type="button" onclick="toggleSidebar(true)" aria-label="打开导航菜单">☰</button><b>NexRelay</b></div><div class="top"><div><h1 id="pageTitle">仪表盘</h1></div><div class="actions"><button id="themeBtn" class="theme-toggle" onclick="toggleTheme()" title="切换到夜间模式" aria-label="切换到夜间模式">☾</button><span id="enabledPill" class="status-note">读取中</span></div></div>
-<div class="grid"><section class="card wide intro-card"><h2>欢迎使用 NexRelay-sdjoint</h2><p>NexRelay-sdjoint 是为 IG830 打造的本地自托管短信中继平台，集中管理设备、SIM 与短信，并将收到的消息安全转发至钉钉、飞书、企业微信、Telegram、个人微信及其他自定义服务。</p><div class="intro-points"><span>本地自主部署</span><span>多通道转发</span><span>设备实时监控</span><span>敏感配置留在服务器</span></div></section><section class="card wide"><h2>设备与运营商状态</h2><div class="status"><div class="metric">USB 设备<b id="usb">—</b></div><div class="metric">USB 模式<b id="usbMode">读取中</b></div><div class="metric">短信串口<b id="serial">—</b></div><div class="metric">SIM 卡<b id="sim">—</b></div><div class="metric">本机号码<b id="phoneNumber">读取中</b></div><div class="metric">信号强度<div id="signalBars" class="signal"><i></i><i></i><i></i><i></i><i></i></div><b id="signalText">—</b></div><div class="metric">运营商<b id="operator">—</b></div><div class="metric">网络注册<b id="registration">—</b></div></div><p id="phoneNote" class="sub">号码由 SIM/运营商写入信息提供；部分 SIM 不保存本机号码。</p><p id="note" class="sub"></p><div class="actions"><button class="secondary" onclick="refreshAll()">刷新状态</button></div></section>
+<div class="grid"><section class="card wide intro-card"><h2>欢迎使用 NexRelay-sdjoint</h2><p>NexRelay-sdjoint 是为 IG830 打造的本地自托管短信中继平台，集中管理设备、SIM 与短信，并将收到的消息安全转发至钉钉、飞书、企业微信、Telegram、个人微信及其他自定义服务。</p><div class="intro-points"><span>本地自主部署</span><span>多通道转发</span><span>设备实时监控</span><span>敏感配置留在服务器</span></div></section><section class="card wide"><h2>设备与运营商状态</h2><div class="status"><div class="metric">USB 设备<b id="usb">—</b></div><div class="metric">USB 模式<b id="usbMode">读取中</b></div><div class="metric">短信串口<b id="serial">—</b></div><div class="metric">SIM 卡<b id="sim">—</b></div><div class="metric">本机号码<b id="phoneNumber">读取中</b></div><div class="metric">信号强度<div id="signalBars" class="signal"><i></i><i></i><i></i><i></i><i></i></div><b id="signalText">—</b></div><div class="metric">运营商<b id="operator">—</b></div><div class="metric">网络注册<b id="registration">—</b></div></div><p id="phoneNote" class="sub">号码由 SIM/运营商写入信息提供；部分 SIM 不保存本机号码。</p><p id="note" class="sub"></p><p class="sub">设备状态每 3 秒自动刷新。</p></section>
 <section class="card wide danger-card"><h2>IG830 USB 兼容模式转换（高级操作）</h2><p class="bad"><b>高风险：</b>这里修改的是 IG830 模块自身的永久 USB 参数，UTM 快照和 Ubuntu 备份都无法回滚。不同硬件不能照抄参数。</p><p class="sub">安全流程：读取本机参数 → 自动保存出厂备份 → 用户核对硬件身份 → 写入兼容 VID/PID → 用户单独确认重启。平台只替换 VID/PID，其余接口开关完全沿用本机原值。</p><div class="status"><div class="metric">硬件身份<b id="usbIdentity">尚未读取</b></div><div class="metric">当前 USB ID<b id="usbCurrent">—</b></div><div class="metric">目标状态<b id="usbTarget">2c7c:0125</b></div><div class="metric">出厂备份<b id="usbBackup">—</b></div></div><div class="field"><label>当前原始参数</label><input id="usbRaw" readonly placeholder="点击读取并备份"></div><div class="actions"><button class="secondary" onclick="readUsbConfig()">1. 读取并备份原始参数</button></div><div class="check confirm-check"><input id="usbApplyConfirm" type="checkbox"><label for="usbApplyConfirm">我已核对硬件身份和出厂备份，同意写入兼容 USB ID</label></div><p class="confirm-hint">刷新页面后默认不勾选；执行后会自动复位。</p><div class="actions"><button class="danger" onclick="applyUsbConfig()">2. 写入 Linux 兼容 USB ID</button></div><div class="check confirm-check"><input id="usbRestartConfirm" type="checkbox"><label for="usbRestartConfirm">我了解设备会暂时离线，同意重启 IG830 使参数生效</label></div><div class="actions"><button class="danger" onclick="restartIg830()">3. 重启 IG830</button></div><div class="danger-zone"><div class="check confirm-check"><input id="usbRestoreConfirm" type="checkbox"><label for="usbRestoreConfirm">我确认使用本机备份恢复 IG830 出厂 USB 参数</label></div><div class="actions"><button class="danger" onclick="restoreUsbConfig()">从本机备份恢复出厂参数</button></div></div></section>
 <section class="group-title"><h2>一、全局控制</h2><p>总开关决定平台是否执行短信转发，各通道开关不会覆盖这里的状态。</p></section><section class="card primary-control"><h2>短信转发总开关</h2><div class="check"><input id="enabled" type="checkbox"><label for="enabled">启用短信转发</label></div><div class="row"><div class="field"><label>短信检查间隔（秒）</label><input id="poll_interval" type="number" min="3" max="3600"></div><div class="field"><label>短信串口</label><input id="serial_port" placeholder="通常为 /dev/ttyUSB2"></div></div><p class="sub">总开关开启后，平台只向已经单独启用、配置完整且测试成功的通道转发。</p></section><section class="group-title"><h2>二、转发通道</h2><p>选择一个通道进行配置；已启用的其他通道会继续正常工作。</p></section><section class="channel-tabs"><h2>通道选择</h2><button type="button" data-channel-tab="custom" class="active" onclick="showChannel('custom')"><i class="channel-dot" data-channel-dot="custom"></i>Webhook</button><button type="button" data-channel-tab="dingtalk" onclick="showChannel('dingtalk')"><i class="channel-dot" data-channel-dot="dingtalk"></i>钉钉</button><button type="button" data-channel-tab="feishu" onclick="showChannel('feishu')"><i class="channel-dot" data-channel-dot="feishu"></i>飞书</button><button type="button" data-channel-tab="wecom" onclick="showChannel('wecom')"><i class="channel-dot" data-channel-dot="wecom"></i>企业微信</button><button type="button" data-channel-tab="telegram" onclick="showChannel('telegram')"><i class="channel-dot" data-channel-dot="telegram"></i>Telegram</button><button type="button" data-channel-tab="wechat" onclick="showChannel('wechat')"><i class="channel-dot" data-channel-dot="wechat"></i>微信通知</button><button type="button" data-channel-tab="email" onclick="showChannel('email')"><i class="channel-dot" data-channel-dot="email"></i>邮件</button><button type="button" data-channel-tab="more" onclick="showChannel('more')"><i class="channel-dot" data-channel-dot="more"></i>更多</button></section>
 <section class="card"><h2>自定义 Webhook</h2><div class="field"><label>Webhook URL</label><input id="webhook_url" placeholder="https://your-app.example/sms"></div><div class="row"><div class="field"><label>请求方法</label><select id="http_method"><option>POST</option><option>PUT</option></select></div><div class="field"><label>鉴权请求头名称</label><input id="auth_header" placeholder="Authorization"></div></div><div class="field"><label>鉴权请求头值（留空保持原值）</label><div class="secret-input"><input id="auth_value" type="password" placeholder="Bearer ..."><button type="button" class="secret-toggle" onclick="toggleSecret('auth_value',this)" aria-label="显示敏感内容" aria-pressed="false" title="显示"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/><path class="eye-slash" d="m4 4 16 16"/></svg></button></div></div><button class="secondary" onclick="testChannel('custom','自定义 Webhook')">测试 Webhook</button><details class="channel-guide"><summary>如何获取 Webhook 和鉴权信息</summary><div class="guide-body"><ol><li>在接收短信的 App 或服务端创建一个可接收 HTTP JSON 的接口，并启用 HTTPS。</li><li>把接口完整地址填入 Webhook URL；根据接口要求选择 <code>POST</code> 或 <code>PUT</code>。</li><li>若接口要求 Token，将请求头名称填为 <code>Authorization</code> 等实际字段，请求头值填入完整内容，例如 <code>Bearer xxxxx</code>。</li><li>先保存配置，再点击测试；在接收端核对测试请求与返回状态。</li></ol><p class="guide-warning">Webhook 与鉴权信息等同密码，不要发布到公开仓库或截图中。</p></div></details></section>
@@ -1405,6 +1436,8 @@ function logKindLabel(kind){return logKindLabels[kind]||kind||'系统事件'}
 function localizedLogMessage(message){let text=String(message||'');for(let [key,label] of Object.entries(channelLabels)){if(text.startsWith(key+' '))return label+text.slice(key.length)}return text}
 function fill(c){for(let k of fields){let e=$(k);if(!e)continue;if(e.type==='checkbox')e.checked=!!c[k];else if(!secretFields.includes(k))e.value=c[k]??''}$('enabledPill').textContent=c.enabled?'转发已启用':'转发已停用';$('enabledPill').className='status-note '+(c.enabled?'':'warn-state');updateChannelDots(c)}
 async function refreshAll(){try{let [c,s,l,st]=await Promise.all([api('/api/config'),api('/api/status'),api('/api/logs'),api('/api/stats')]);fill(c);let r=s.runtime||{},errors=r.channel_errors||{},tests=r.channel_tests||{};updateChannelDots(c,errors,tests);let health=channelHealthSummary(c,errors,tests),status=!s.device_online?'设备离线':!c.enabled?'已停用':health.active===0?'等待通道配置':health.healthy===health.active?'运行中':health.healthy>0?'部分通道异常':health.untested===health.active?'等待通道测试':'转发异常';$('dashboardForwardStatus').textContent=status;$('dashboardForwardStatus').className=status==='运行中'?'ok':status==='设备离线'||status.includes('异常')?'bad':'warn';$('dashboardChannelCount').textContent=`${health.healthy} 正常 / ${health.active} 已启用`;$('dashboardChannelErrors').textContent=String(health.abnormal);$('dashboardChannelErrors').className=health.abnormal?'bad':'ok';$('dashboardLastPoll').textContent=localTime(r.last_poll);if($('appVersion'))$('appVersion').textContent=`v${s.version}`;if($('configSchema'))$('configSchema').textContent=String(s.config_schema);let deviceOnline=Boolean(s.device_online);if(!deviceOnline){$('enabledPill').textContent='设备离线';$('enabledPill').className='status-note bad-state'}$('usb').textContent=s.usb_present?'已识别':'未检测到';$('usb').className=s.usb_present?'ok':'bad';let usbModeLabel=s.usb_mode==='compatible'?'Linux 兼容':s.usb_mode==='factory'?'大疆出厂':'未知';$('usbMode').textContent=s.usb_present?`${usbModeLabel} · ${s.usb_id||'—'}`:'未检测到';$('usbMode').className=s.usb_present?'ok':'bad';$('serial').textContent=s.serial_present?s.serial_port:'不可用';$('serial').className=s.serial_present?'ok':'bad';$('sim').textContent=deviceOnline?(r.sim_ready?'已就绪':'未就绪'):'设备离线';$('sim').className=deviceOnline&&r.sim_ready?'ok':'bad';$('phoneNumber').textContent=deviceOnline?(r.phone_number||'SIM 未提供'):'设备离线';$('phoneNumber').className=deviceOnline?(r.phone_number?'ok':'warn'):'bad';$('operator').textContent=deviceOnline?(r.operator||'未识别'):'设备离线';$('operator').className=deviceOnline&&r.registered?'ok':deviceOnline?'warn':'bad';$('registration').textContent=deviceOnline?(r.registration||'未知'):'设备离线';$('registration').className=deviceOnline&&r.registered?'ok':deviceOnline?'warn':'bad';let level=deviceOnline?Number(r.signal_level||0):0;document.querySelectorAll('#signalBars i').forEach((e,i)=>e.classList.toggle('on',i<level));$('signalText').textContent=deviceOnline?(r.signal_dbm==null?'未知':`${r.signal_dbm} dBm · ${level}/5`):'设备离线';$('signalText').className=deviceOnline?'':'bad';$('note').textContent=s.note+(deviceOnline&&r.last_error?'；'+r.last_error:'');$('logs').innerHTML=l.length?l.map(x=>`<div class="entry"><b>${esc(logKindLabel(x.kind))}</b> ${esc(localizedLogMessage(x.message))}<br><small>${esc(localTime(x.time))}</small></div>`).join(''):'<div class="sub">暂无记录</div>';$('statMessages').textContent=st.messages;$('statToday').textContent=st.today;$('statSuccess').textContent=st.deliveries.success||0;$('statFailed').textContent=(st.deliveries.failed||0)+(st.deliveries.pending||0);$('topSenders').textContent=st.top_senders.length?'常见发送方：'+st.top_senders.map(x=>`${x.sender}（${x.count} 条）`).join(' · '):'暂无发送方统计';$('copyrightYear').textContent=String(new Date().getFullYear());loadMessages()}catch(e){if(e.message.includes('401'))logout();else msg(e.message,true)}}
+async function refreshDeviceStatus(){if(!tok)return;try{let s=await api('/api/status'),c=lastChannelConfig||{},r=s.runtime||{},errors=r.channel_errors||{},tests=r.channel_tests||{},health=channelHealthSummary(c,errors,tests),status=!s.device_online?'设备离线':!c.enabled?'已停用':health.active===0?'等待通道配置':health.healthy===health.active?'运行中':health.healthy>0?'部分通道异常':health.untested===health.active?'等待通道测试':'转发异常';$('dashboardForwardStatus').textContent=status;$('dashboardForwardStatus').className=status==='运行中'?'ok':status==='设备离线'||status.includes('异常')?'bad':'warn';$('dashboardLastPoll').textContent=localTime(r.last_poll);let deviceOnline=Boolean(s.device_online);$('enabledPill').textContent=deviceOnline?(c.enabled?'转发已启用':'转发已停用'):'设备离线';$('enabledPill').className='status-note '+(!deviceOnline?'bad-state':c.enabled?'':'warn-state');$('usb').textContent=s.usb_present?'已识别':'未检测到';$('usb').className=s.usb_present?'ok':'bad';let usbModeLabel=s.usb_mode==='compatible'?'Linux 兼容':s.usb_mode==='factory'?'大疆出厂':'未知';$('usbMode').textContent=s.usb_present?`${usbModeLabel} · ${s.usb_id||'—'}`:'未检测到';$('usbMode').className=s.usb_present?'ok':'bad';$('serial').textContent=s.serial_present?s.serial_port:'不可用';$('serial').className=s.serial_present?'ok':'bad';$('sim').textContent=deviceOnline?(r.sim_ready?'已就绪':'未就绪'):'设备离线';$('sim').className=deviceOnline&&r.sim_ready?'ok':'bad';$('phoneNumber').textContent=deviceOnline?(r.phone_number||'SIM 未提供'):'设备离线';$('phoneNumber').className=deviceOnline?(r.phone_number?'ok':'warn'):'bad';$('operator').textContent=deviceOnline?(r.operator||'未识别'):'设备离线';$('operator').className=deviceOnline&&r.registered?'ok':deviceOnline?'warn':'bad';$('registration').textContent=deviceOnline?(r.registration||'未知'):'设备离线';$('registration').className=deviceOnline&&r.registered?'ok':deviceOnline?'warn':'bad';let level=deviceOnline?Number(r.signal_level||0):0;document.querySelectorAll('#signalBars i').forEach((e,i)=>e.classList.toggle('on',i<level));$('signalText').textContent=deviceOnline?(r.signal_dbm==null?'未知':`${r.signal_dbm} dBm · ${level}/5`):'设备离线';$('signalText').className=deviceOnline?'':'bad';$('note').textContent=s.note+(deviceOnline&&r.last_error?'；'+r.last_error:'')}catch(e){if(e.message.includes('401'))logout()}}
+setInterval(()=>{if(!document.hidden)refreshDeviceStatus()},3000);
 function collect(){let c={};for(let k of fields){let e=$(k);c[k]=e.type==='checkbox'?e.checked:e.value}c.poll_interval=Number(c.poll_interval);return c}
 async function save(){try{let c=await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});channelTestState={};fill(c);await refreshAll();await refreshTelegramReplyStatus();msg('配置已保存；仅修改的通道需重新测试')}catch(e){msg(e.message,true)}}
 async function testChannel(channel,label){try{let r=await api('/api/test-channel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel})});channelTestState[channel]='success';updateChannelDots(lastChannelConfig);msg(`${label}测试成功，HTTP ${r.status}`)}catch(e){channelTestState[channel]='error';updateChannelDots(lastChannelConfig);msg(`${label}测试失败：${e.message}`,true)}}
@@ -1708,6 +1741,7 @@ if __name__ == "__main__":
     restore_channel_runtime()
     migrate_stored_message_encoding()
     log_event("service", "NexRelay 服务已启动")
+    threading.Thread(target=device_monitor, name="device-monitor", daemon=True).start()
     threading.Thread(target=worker, name="sms-worker", daemon=True).start()
     threading.Thread(target=telegram_reply_worker, name="telegram-reply-worker", daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", 8765), Handler).serve_forever()

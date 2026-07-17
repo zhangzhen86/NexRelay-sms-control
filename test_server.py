@@ -23,6 +23,8 @@ class SmsControlTests(unittest.TestCase):
         self.assertNotIn('id="smsSendConfirm"', server.HTML)
         self.assertNotIn("$('smsSendConfirm')", server.HTML)
         self.assertIn("border:0!important", server.HTML)
+        self.assertNotIn('onclick="refreshAll()">刷新状态', server.HTML)
+        self.assertIn("refreshDeviceStatus()},3000", server.HTML)
 
     def test_filter_rules(self):
         cfg = dict(server.DEFAULTS, sender_allow="10086,+138", sender_block="spam", keyword_include="验证码,code", keyword_exclude="广告")
@@ -169,6 +171,24 @@ class SmsControlTests(unittest.TestCase):
         finally:
             server.RUNTIME.clear()
             server.RUNTIME.update(original_runtime)
+
+    def test_device_transition_is_logged_only_when_online_state_changes(self):
+        original_log = server.LOG_FILE
+        original_state = server.DEVICE_ONLINE_STATE
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                server.LOG_FILE = Path(directory) / "events.log"
+                server.DEVICE_ONLINE_STATE = None
+                self.assertTrue(server.record_device_transition(False))
+                self.assertFalse(server.record_device_transition(False))
+                self.assertTrue(server.record_device_transition(True, "2c7c:0125", "/dev/ttyUSB2"))
+                self.assertFalse(server.record_device_transition(True, "2c7c:0125", "/dev/ttyUSB2"))
+                self.assertTrue(server.record_device_transition(False))
+                messages = [row["message"] for row in server.all_logs()]
+                self.assertEqual(messages, ["IG830 设备已离线", "IG830 设备已上线", "IG830 设备已离线"])
+        finally:
+            server.LOG_FILE = original_log
+            server.DEVICE_ONLINE_STATE = original_state
 
     def test_builds_single_part_ucs2_sms_submit_pdu(self):
         message = "您的验证码是 123456"
