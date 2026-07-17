@@ -29,6 +29,9 @@ class SmsControlTests(unittest.TestCase):
         self.assertIn("await refreshPageData(page)", server.HTML)
         self.assertIn("displayPage(page)", server.HTML)
         self.assertIn('.sidebar-save.user-save{color:#355f73!important}', server.HTML)
+        self.assertEqual(server.OUTBOUND_SMS_COOLDOWN, 5)
+        self.assertIn("两次发送至少间隔 5 秒", server.HTML)
+        self.assertNotIn("30 秒冷却", server.HTML)
 
     def test_filter_rules(self):
         cfg = dict(server.DEFAULTS, sender_allow="10086,+138", sender_block="spam", keyword_include="验证码,code", keyword_exclude="广告")
